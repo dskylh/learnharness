@@ -1,0 +1,95 @@
+name: AppImage Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: appimage-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  build-appimage:
+    name: Build & Release AppImage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "26"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Native renderer tests on Linux
+        run: npx electron --import tsx --test tests/pdf-native-render.test.ts tests/pdf-ops.test.ts tests/svg-native-render.test.ts tests/browser-service.test.ts
+        env:
+          NODE_ENV: test
+          ELECTRON_RUN_AS_NODE: "1"
+
+      - run: npm run build
+
+      - name: Smoke provider runtime
+        run: node scripts/smoke-provider-runtime.mjs
+
+      - name: Build standalone server
+        run: node scripts/build-server.mjs
+
+      - name: Smoke server boot
+        run: node scripts/smoke-server.mjs --electron
+
+      - name: Package Linux x64 AppImage
+        run: npx electron-builder --linux AppImage --x64 --publish never
+
+      - name: Publish or Update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v${VERSION}"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          BUILD_DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
+
+          # Gather AppImage assets and update metadata feed
+          ASSETS=(dist/*.AppImage dist/latest-linux.yml)
+          if compgen -G "dist/*.zsync" > /dev/null; then
+            ASSETS+=(dist/*.zsync)
+          fi
+
+          echo "Publishing assets: ${ASSETS[*]}"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG exists. Updating release assets and notes..."
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber
+            gh release edit "$TAG" --latest --notes "Automated AppImage build for commit ${SHORT_SHA} (${BUILD_DATE})"
+          else
+            echo "Release $TAG does not exist. Creating new release..."
+            gh release create "$TAG" "${ASSETS[@]}" \
+              --title "LearnHarness v${VERSION}" \
+              --notes "Automated AppImage build for commit ${SHORT_SHA} (${BUILD_DATE})" \
+              --latest
+          fi
+
+      - name: Upload artifact backup
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: learnharness-linux-appimage
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            dist/*.AppImage
+            dist/latest-linux.yml
+            dist/*.zsync

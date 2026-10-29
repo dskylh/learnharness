@@ -1,0 +1,73 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    # Run daily at 04:00 UTC
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    name: Sync upstream/main
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Configure Git author
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream main
+        run: |
+          git remote add upstream https://github.com/amosblomqvist/learnharness.git || git remote set-url upstream https://github.com/amosblomqvist/learnharness.git
+          git fetch upstream main
+
+      - name: Check for upstream changes
+        id: check_upstream
+        run: |
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "Already up-to-date with upstream/main."
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Upstream has new commits to sync."
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Attempt merge
+        if: steps.check_upstream.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Attempting test merge..."
+          if git merge --no-commit --no-ff upstream/main; then
+            echo "Clean merge possible. Committing and pushing to main..."
+            git commit -m "chore(sync): merge upstream updates from amosblomqvist/learnharness"
+            git push origin main
+          else
+            echo "Merge conflict detected! Creating PR for conflict resolution..."
+            git merge --abort
+
+            SYNC_BRANCH="upstream-sync-pending"
+            git push origin upstream/main:refs/heads/"$SYNC_BRANCH" --force
+
+            # Check if open PR already exists
+            EXISTING_PR=$(gh pr list --head "$SYNC_BRANCH" --base main --state open --json number -q '.[0].number')
+            if [ -n "$EXISTING_PR" ]; then
+              echo "PR #$EXISTING_PR is already open for $SYNC_BRANCH."
+            else
+              gh pr create \
+                --base main \
+                --head "$SYNC_BRANCH" \
+                --title "Sync Upstream: Merge Conflict Detected" \
+                --body "Automatic sync from upstream/main encountered merge conflicts. Please resolve the conflicts in this PR to integrate upstream changes into your main branch."
+            fi
+          fi
