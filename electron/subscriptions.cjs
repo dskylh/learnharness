@@ -4,9 +4,10 @@ const path = require("node:path");
 const { createRequire, registerHooks } = require("node:module");
 const { pathToFileURL } = require("node:url");
 const { PROVIDERS, fileStore, validateCredential, safeHttps, failure } = require("./subscription-store.cjs");
+const { createGoogleAntigravityProvider, fetchAntigravityCatalogAndQuotas, ANTIGRAVITY_API, DEFAULT_ENDPOINT } = require("./antigravity.cjs");
 
-const LABELS = { "github-copilot": "GitHub Copilot", xai: "Grok" };
-const APIS = new Set(["openai-responses", "openai-completions", "anthropic-messages"]);
+const LABELS = { "github-copilot": "GitHub Copilot", xai: "Grok", "google-antigravity": "Google" };
+const APIS = new Set(["openai-responses", "openai-completions", "anthropic-messages", ANTIGRAVITY_API]);
 const clone = (value) => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 const MESSAGES = {
 	storage: "The saved connection could not be read or written safely. Reopen the app or reconnect after resolving the credential-file problem.",
@@ -33,15 +34,31 @@ async function loadSubscriptionSDK(baseDirectory) {
 		try { file = resolve.resolve(id); } finally { hook.deregister(); }
 		return import(pathToFileURL(file).href);
 	};
-	const [sdk, copilot, xai] = await Promise.all([load("@earendil-works/pi-ai"), load("@earendil-works/pi-ai/providers/github-copilot"), load("@earendil-works/pi-ai/providers/xai")]);
-	return { ...sdk, ...copilot, ...xai };
+	const [sdk, copilot, xai, eventStream] = await Promise.all([
+		load("@earendil-works/pi-ai"),
+		load("@earendil-works/pi-ai/providers/github-copilot"),
+		load("@earendil-works/pi-ai/providers/xai"),
+		load("@earendil-works/pi-ai/utils/event-stream"),
+	]);
+	return {
+		...sdk,
+		...copilot,
+		...xai,
+		googleAntigravityProvider: () => createGoogleAntigravityProvider({
+			createAssistantMessageEventStream: eventStream.createAssistantMessageEventStream,
+			calculateCost: sdk.calculateCost,
+			getCurrentSystemPrompt: sdk.getCurrentSystemPrompt,
+			getCurrentTools: sdk.getCurrentTools,
+		}),
+	};
 }
 function validEndpoint(providerId, auth, credential) {
 	if (!auth || (!(typeof auth.apiKey === "string" && auth.apiKey.length > 0) && !Object.entries(auth.headers ?? {}).some(([key, value]) => ["authorization", "x-api-key", "api-key"].includes(key.toLowerCase()) && typeof value === "string" && value.trim().length > 0))) return false;
-	const value = auth.baseUrl ?? (providerId === "xai" ? "https://api.x.ai/v1" : "https://api.individual.githubcopilot.com");
+	const value = auth.baseUrl ?? (providerId === "xai" ? "https://api.x.ai/v1" : providerId === "google-antigravity" ? DEFAULT_ENDPOINT : "https://api.individual.githubcopilot.com");
 	if (!safeHttps(value)) return false;
 	const url = new URL(value);
 	if (providerId === "xai") return url.origin === "https://api.x.ai" && url.pathname.replace(/\/$/, "") === "/v1" && !url.search && !url.hash;
+	if (providerId === "google-antigravity") return !url.search && !url.hash && url.pathname === "/" && (!url.port || url.port === "443") && (url.hostname === "googleapis.com" || url.hostname.endsWith(".googleapis.com"));
 	const domain = credential?.enterpriseUrl;
 	return !url.search && !url.hash && url.pathname === "/" && (!url.port || url.port === "443") && (url.hostname.endsWith(".githubcopilot.com") || (domain && (url.hostname === domain || url.hostname.endsWith(`.${domain}`))));
 }
@@ -58,12 +75,15 @@ function createSubscriptions(options) {
 	function statusOf(entry) {
 		const available = entry.ready && !closed && !paused && !entry.fatal;
 		const attempt = entry.attempt;
+		const connected = !!(available && entry.state.credential && !entry.blocked && !entry.authFailed);
+		const quotas = connected && Array.isArray(entry.state.credential?.catalog?.quotas) ? clone(entry.state.credential.catalog.quotas) : undefined;
 		return {
-			providerId: entry.providerId, available, connected: !!(available && entry.state.credential && !entry.blocked && !entry.authFailed), pending: !!attempt, committing: attempt?.committing === true,
+			providerId: entry.providerId, available, connected, pending: !!attempt, committing: attempt?.committing === true,
 			allowBackgroundUse: entry.state.allowBackgroundUse, connectionId: entry.state.connectionId ?? null,
 			epoch: entry.epoch, authorityRevision: entry.authorityRevision, revision: entry.revision,
 			...(entry.error ? { error: entry.error } : {}),
 			...(attempt ? { interaction: clone(attempt.public) } : {}),
+			...(quotas && quotas.length > 0 ? { quotas } : {}),
 		};
 	}
 	function snapshotNow() {
@@ -82,7 +102,7 @@ function createSubscriptions(options) {
 		if (entry.state.credential) {
 			const auth = await entry.provider.auth.oauth.toAuth(entry.state.credential);
 			if (!validEndpoint(entry.providerId, auth, entry.state.credential)) throw failure("storage");
-			endpoint = auth.baseUrl ?? (entry.providerId === "xai" ? "https://api.x.ai/v1" : "https://api.individual.githubcopilot.com");
+			endpoint = auth.baseUrl ?? (entry.providerId === "xai" ? "https://api.x.ai/v1" : entry.providerId === "google-antigravity" ? DEFAULT_ENDPOINT : "https://api.individual.githubcopilot.com");
 		}
 		if (entry.endpoint !== endpoint) { entry.endpoint = endpoint; entry.authorityRevision++; }
 	}
@@ -99,7 +119,11 @@ function createSubscriptions(options) {
 		await Promise.all([...entries.values()].map(async (entry) => {
 			try {
 				entry.state = clone(await entry.disk.read());
-				const native = entry.providerId === "github-copilot" ? sdk.githubCopilotProvider() : sdk.xaiProvider();
+				const native = entry.providerId === "github-copilot"
+					? sdk.githubCopilotProvider()
+					: entry.providerId === "xai"
+						? sdk.xaiProvider()
+						: (sdk.googleAntigravityProvider ? sdk.googleAntigravityProvider() : createGoogleAntigravityProvider());
 				// No API-key auth method exists in this collection: ambient keys cannot become a fallback.
 				entry.provider = { ...native, auth: { oauth: native.auth.oauth } };
 				const store = {
@@ -235,7 +259,19 @@ function createSubscriptions(options) {
 		async retry(providerId) {
 			await ready; const entry = entryFor(providerId);
 			const model = entry.catalog[0]; if (!model || entry.fatal || entry.blocked) throw failure("unavailable");
-			await resolveAuth(entry, model.id); entry.authFailed = false; entry.error = undefined; changed(entry);
+			await resolveAuth(entry, model.id);
+			if (providerId === "google-antigravity" && entry.state.credential) {
+				const projectId = entry.state.credential.projectId;
+				const refreshedCatalog = await fetchAntigravityCatalogAndQuotas(entry.state.credential.access, projectId);
+				if (refreshedCatalog) {
+					await serialized(entry, async () => {
+						if (entry.state.credential && !entry.fatal && !closed && !paused) {
+							await save(entry, { ...entry.state, credential: { ...entry.state.credential, catalog: refreshedCatalog } });
+						}
+					});
+				}
+			}
+			entry.authFailed = false; entry.error = undefined; changed(entry);
 		},
 		async disconnect(providerId) {
 			await ready; const entry = entryFor(providerId); cancel(providerId);

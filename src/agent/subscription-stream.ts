@@ -47,8 +47,7 @@ export function nativeSubscriptionStream(provider: Provider, background: () => b
 				const auth = await subscriptionLease(scope, purpose); check();
 				const authKeys = new Set(Object.keys(auth.headers ?? {}).map((key) => key.toLowerCase()));
 				if (Object.keys(options?.headers ?? {}).some((key) => authKeys.has(key.toLowerCase()))) throw new Error("Authorization override forbidden");
-				const nativeModel = provider.getModels().find((model) => model.id === logicalModel.id && model.api === logicalModel.api);
-				if (!nativeModel) throw new Error("Native model unavailable");
+				const nativeModel = provider.getModels().find((model) => model.id === logicalModel.id && model.api === logicalModel.api) ?? { ...logicalModel, provider: nativeId };
 				const transport = { ...nativeModel, ...(auth.baseUrl ? { baseUrl: auth.baseUrl } : {}) };
 				const fetch = options?.fetch ?? globalThis.fetch;
 				const source = provider.streamSimple(transport, subscriptionHistory(normalizeContext(context), logicalModel, nativeId), {

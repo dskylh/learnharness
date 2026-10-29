@@ -13,6 +13,20 @@ export const SUBSCRIPTION_BACKGROUND_HINT = "Allow LearnHarness helper agents an
 export function subscriptionNotice(label: string, web = false): string { return `Your prompts, tool results, and relevant session context are sent to ${label} to run the work you select. Credentials are stored ${web ? "on the machine running LearnHarness" : "locally"} in an owner-only plaintext file. Provider terms, data-use policies, and plan limits apply. This connection never falls back to an API key.`; }
 export function subscriptionDisconnectCopy(label: string, web = false): string { return `Disconnect ${label} from LearnHarness? This stops work using this connection and removes its saved credentials from ${web ? "the machine running LearnHarness" : "this device"}. It does not cancel your subscription or revoke access at the provider. Saved model choices will remain unavailable until you reconnect or change them.`; }
 export function emptySubscriptionStatus(providerId: NativeSubscriptionProviderId): NativeSubscriptionStatus { return { providerId, available: false, connected: false, pending: false, allowBackgroundUse: true, connectionId: null, epoch: 0, authorityRevision: 0, revision: 0 }; }
+function formatQuotaReset(resetTime?: string): string | undefined {
+	if (!resetTime) return undefined;
+	const ts = Date.parse(resetTime);
+	if (!Number.isFinite(ts)) return undefined;
+	const delta = ts - Date.now();
+	if (delta <= 0) return "resets now";
+	const totalMin = Math.round(delta / 60000);
+	const days = Math.floor(totalMin / (60 * 24));
+	const hours = Math.floor((totalMin % (60 * 24)) / 60);
+	const mins = totalMin % 60;
+	if (days > 0) return `${days}d ${hours}h`;
+	if (hours > 0) return `${hours}h ${mins}m`;
+	return `${mins}m`;
+}
 const Context = createContext({ statuses: [] as NativeSubscriptionStatus[], busy: false, open: (_providerId: NativeSubscriptionProviderId) => {} });
 const CONTROL_ERROR = "The connection could not be changed. Try again.";
 
@@ -95,6 +109,24 @@ export function NativeSubscriptionUIProvider({ children }: { children: React.Rea
 					<span>Allow background use<span className="mt-1 block leading-relaxed text-muted-foreground">{SUBSCRIPTION_BACKGROUND_HINT}</span></span>
 				</div>
 				{!status.available && <p className="mt-3 text-xs text-muted-foreground">Subscription sign-in requires the desktop app's private server connection. API-key connections remain available here.</p>}
+				{management && status.connected && status.quotas && status.quotas.length > 0 && <div className="mt-4 space-y-2 border-t border-border pt-3 text-xs" data-testid="subscription-quotas">
+					<div className="flex items-center justify-between text-muted-foreground">
+						<span className="font-medium uppercase tracking-wide">Model quotas</span>
+						<Button type="button" variant="ghost" size="xs" disabled={busy || !!operation} onClick={() => bridge && void control(() => bridge.retry(dialog))}>Refresh</Button>
+					</div>
+					<ul className="max-h-44 space-y-1.5 overflow-y-auto pr-1">
+						{status.quotas.map((q) => {
+							const pct = typeof q.remainingFraction === "number" ? Math.round(q.remainingFraction * 1000) / 10 : undefined;
+							const reset = formatQuotaReset(q.resetTime);
+							return <li key={q.id} className="flex items-center justify-between gap-2 text-muted-foreground">
+								<span className="truncate text-foreground">{q.label}</span>
+								<span className="shrink-0 tabular-nums">
+									{pct !== undefined ? `${pct}% left` : "—"}{reset ? ` · ${reset}` : ""}
+								</span>
+							</li>;
+						})}
+					</ul>
+				</div>}
 				{view === "connection" && interaction && <div className="mt-3 space-y-3 text-xs" data-testid="subscription-login-interaction">
 					{interaction.progress && <p role="status" className="text-muted-foreground">{interaction.progress}</p>}
 					{interaction.userCode && <p>Device code: <code className="select-text font-mono">{interaction.userCode}</code></p>}

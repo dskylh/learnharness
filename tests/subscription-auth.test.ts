@@ -7,22 +7,31 @@ import { createRequire } from "node:module";
 import { createModels, type OAuthCredential, type ProviderAuthInteraction } from "@earendil-works/pi-ai";
 import { githubCopilotProvider } from "@earendil-works/pi-ai/providers/github-copilot";
 import { xaiProvider } from "@earendil-works/pi-ai/providers/xai";
+import { googleAntigravityProvider } from "../src/agent/antigravity-provider.ts";
 import type { NativeSubscriptionScope } from "../src/core/contracts/subscriptions.ts";
 const require = createRequire(import.meta.url);
 const { createSubscriptions, loadSubscriptionSDK, validEndpoint, publicError } = require("../electron/subscriptions.cjs");
 const { fileStore, validateState } = require("../electron/subscription-store.cjs");
 const { subscriptionControl } = require("../electron/subscription-ipc.cjs");
-const ids = ["github-copilot", "xai"] as const;
-const credential = (id: string, expires = Date.now() + 3600000): OAuthCredential => ({ type: "oauth", access: id === "xai" ? "fixture-xai-access" : "tid=fixture;proxy-ep=proxy.individual.githubcopilot.com;", refresh: "fixture-refresh", expires, ...(id === "github-copilot" ? { availableModelIds: [githubCopilotProvider().getModels()[0]!.id] } : {}) });
+const { buildAntigravityCatalogFromRaw, encodeAntigravityApiKey } = require("../electron/antigravity.cjs");
+const ids = ["github-copilot", "xai", "google-antigravity"] as const;
+const credential = (id: string, expires = Date.now() + 3600000): OAuthCredential => ({
+	type: "oauth",
+	access: id === "xai" ? "fixture-xai-access" : id === "google-antigravity" ? "fixture-google-access" : "tid=fixture;proxy-ep=proxy.individual.githubcopilot.com;",
+	refresh: "fixture-refresh",
+	expires,
+	...(id === "github-copilot" ? { availableModelIds: [githubCopilotProvider().getModels()[0]!.id] } : {}),
+	...(id === "google-antigravity" ? { projectId: "fixture-project-id", email: "user@example.com" } : {}),
+});
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>((done) => { resolve = done; }); return { resolve, promise }; }
 async function fixture(options: { login?: (id: string, interaction: ProviderAuthInteraction) => Promise<OAuthCredential>; refresh?: (id: string, value: OAuthCredential, signal: AbortSignal) => Promise<OAuthCredential>; stores?: Record<string, unknown> } = {}) {
 	const directory = await fs.mkdtemp(path.join(os.tmpdir(), "lh-subscription-auth-"));
 	let refreshes = 0;
 	const factory = (id: string) => {
-		const native = id === "xai" ? xaiProvider() : githubCopilotProvider();
+		const native = id === "xai" ? xaiProvider() : id === "google-antigravity" ? googleAntigravityProvider() : githubCopilotProvider();
 		return { ...native, auth: { ...native.auth, oauth: { ...native.auth.oauth!, login: (interaction: ProviderAuthInteraction) => options.login?.(id, interaction) ?? Promise.resolve(credential(id)), refresh: async (value: OAuthCredential, signal: AbortSignal) => { refreshes++; return options.refresh?.(id, value, signal) ?? { ...credential(id), refresh: "fixture-rotated" }; } } } };
 	};
-	const sdk = { createModels, githubCopilotProvider: () => factory("github-copilot"), xaiProvider: () => factory("xai") };
+	const sdk = { createModels, githubCopilotProvider: () => factory("github-copilot"), xaiProvider: () => factory("xai"), googleAntigravityProvider: () => factory("google-antigravity") };
 	const updates: any[] = [], opened: string[] = [];
 	const controller = createSubscriptions({ directory, sdk, stores: options.stores, openExternal: async (url: string) => { opened.push(url); }, onChange: (snapshot: unknown) => updates.push(snapshot) });
 	await controller.ready;
@@ -52,15 +61,36 @@ for (const id of ids) test(`${id}: independent default-ON file, restart, explici
 		const publicState = JSON.stringify(await f.controller.snapshot());
 		assert(!publicState.includes(saved.credential.access)); assert(!publicState.includes(saved.credential.refresh));
 		const scope = await f.scope(id), result = await f.controller.lease(scope, false);
-		assert.equal(result.auth.apiKey, saved.credential.access);
+		assert.equal(result.auth.apiKey, id === "google-antigravity" ? encodeAntigravityApiKey(saved.credential) : saved.credential.access);
 		if (id === "github-copilot") assert.equal(result.auth.baseUrl, "https://api.individual.githubcopilot.com");
+		if (id === "google-antigravity") assert.equal(result.auth.baseUrl, "https://daily-cloudcode-pa.googleapis.com");
 		await assert.rejects(f.controller.lease(scope, true), (error: any) => error.code === "background");
 		const reloaded = createSubscriptions({ directory: f.directory, sdk: f.sdk, openExternal: async () => {} }); await reloaded.ready;
 		assert.equal((await reloaded.status()).find((s: any) => s.providerId === id).connectionId, saved.connectionId); reloaded.close();
 		await f.controller.disconnect(id); await assert.rejects(f.controller.lease(scope, false));
 		const removed = JSON.parse(await fs.readFile(path.join(f.directory, `${id}-credentials.json`), "utf8"));
 		assert.deepEqual(removed, { version: 1, allowBackgroundUse: false });
-		assert.equal((await f.controller.status()).find((s: any) => s.providerId !== id).connected, false);
+		assert.equal((await f.controller.status()).find((s: any) => s.providerId === id).connected, false);
+	} finally { await f.cleanup(); }
+});
+test("google-antigravity: dynamic model discovery groups thinking variants and projects per-model quota into status and catalog", async () => {
+	const rawCatalog = {
+		"gemini-3.8-flash-low": { displayName: "Gemini 3.8 Flash (Low)", supportsThinking: true, supportsImages: true, maxTokens: 1048576, maxOutputTokens: 65536, model: "MODEL_PLACEHOLDER_M320", quotaInfo: { remainingFraction: 0.85, resetTime: "2026-10-29T00:00:00Z" } },
+		"gemini-3.8-flash-high": { displayName: "Gemini 3.8 Flash (High)", supportsThinking: true, supportsImages: true, maxTokens: 1048576, maxOutputTokens: 65536, model: "MODEL_PLACEHOLDER_M318", quotaInfo: { remainingFraction: 0.8, resetTime: "2026-10-29T00:00:00Z" } },
+		"gemini-4-argon-thinking": { displayName: "Gemini 4 Argon (Thinking)", supportsThinking: true, supportsImages: true, maxTokens: 1048576, maxOutputTokens: 65536, model: "MODEL_PLACEHOLDER_ARGON", quotaInfo: { remainingFraction: 0.5, resetTime: "2026-10-29T02:00:00Z" } },
+	};
+	const discovered = buildAntigravityCatalogFromRaw(rawCatalog);
+	assert(discovered);
+	assert(discovered.models.some((m: any) => m.id === "gemini-3.8-flash" && m.quota?.remainingFraction === 0.8));
+	assert(discovered.models.some((m: any) => m.id === "gemini-4-argon" && m.quota?.remainingFraction === 0.5));
+	const f = await fixture({ login: async (id) => ({ ...credential(id), catalog: discovered } as any) });
+	try {
+		await f.controller.login("google-antigravity", true);
+		const snap = await f.controller.snapshot();
+		const status = snap.statuses.find((s: any) => s.providerId === "google-antigravity");
+		assert(status.connected);
+		assert(Array.isArray(status.quotas) && status.quotas.length === 2);
+		assert(snap.models["google-antigravity"].some((m: any) => m.id === "gemini-4-argon" && m.quota?.remainingFraction === 0.5));
 	} finally { await f.cleanup(); }
 });
 test("parallel expired-token requests refresh once, preserve native extension metadata and durable rotation", async () => {

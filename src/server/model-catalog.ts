@@ -172,6 +172,7 @@ function keyedProviderIds(): Set<string> {
 
 /** Project one catalog model to the client DTO. */
 export function toModelDto(model: Model<Api>): ModelDto {
+	const quota = (model as Model<Api> & { quota?: { remainingFraction?: number; resetTime?: string } }).quota;
 	return {
 		id: model.id,
 		name: model.name,
@@ -187,6 +188,7 @@ export function toModelDto(model: Model<Api>): ModelDto {
 		},
 		contextWindow: model.provider === CLAUDE_CODE_PROVIDER ? null : model.contextWindow,
 		maxTokens: model.provider === CLAUDE_CODE_PROVIDER ? null : model.maxTokens,
+		...(quota ? { quota } : {}),
 	};
 }
 

@@ -51,9 +51,18 @@ for (const p of NATIVE_SUBSCRIPTIONS) test(`${p.providerId}: every SDK transport
 			fetch: async (input, init) => {
 				requests++; const request = new Request(input, init), body = await request.json();
 				assert.equal(request.headers.get("authorization"), "Bearer fixture-oauth-only");
-				assert.equal(body.model, native.id);
-				if (p.providerId === "github-copilot") { assert.equal(new URL(request.url).origin, "https://api.business.githubcopilot.com"); assert.equal(request.headers.get("x-fixture-auth"), "native-retained"); }
-				else assert.equal(new URL(request.url).origin, "https://api.x.ai");
+				if (p.providerId === "github-copilot") {
+					assert.equal(body.model, native.id);
+					assert.equal(new URL(request.url).origin, "https://api.business.githubcopilot.com");
+					assert.equal(request.headers.get("x-fixture-auth"), "native-retained");
+				} else if (p.providerId === "google-antigravity") {
+					assert.equal(new URL(request.url).origin, "https://daily-cloudcode-pa.googleapis.com");
+					assert.equal(typeof body.model, "string");
+					assert.ok(body.request && typeof body.request === "object");
+				} else {
+					assert.equal(body.model, native.id);
+					assert.equal(new URL(request.url).origin, "https://api.x.ai");
+				}
 				return new Response('{"error":{"message":"private-fixture-provider-detail"}}', { status: 401, headers: { "content-type": "application/json" } });
 			},
 		}).result();
@@ -104,4 +113,95 @@ test("framework IPC alone cannot request subscription credentials or retain a us
 	const previous = sends; delete process.env.LH_DESKTOP_SERVER;
 	await assert.rejects(subscriptionRequest("snapshot"), /desktop app/); assert.equal(sends, previous); assert.deepEqual(nativeSubscriptionModels(), []);
 	process.env.LH_DESKTOP_SERVER = "1";
+});
+test("google-antigravity stream parses SSE thinking, text, toolCall and usage chunks cleanly", async () => {
+	await refreshSubscriptionModels();
+	const engine = piEngineForSpec({ provider: "google-subscription", id: "gemini-3.8-flash", thinkingLevel: "high" }, false);
+	const ssePayload = [
+		'data: {"response":{"candidates":[{"content":{"parts":[{"thought":true,"text":"Thinking step...","thoughtSignature":"YWJjZA=="}]}}]}}',
+		'data: {"response":{"candidates":[{"content":{"parts":[{"text":"Hello world!","thoughtSignature":"ZWZnaA=="}]}}]}}',
+		'data: {"response":{"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":120,"cachedContentTokenCount":20,"candidatesTokenCount":30,"thoughtsTokenCount":10,"totalTokenCount":160}}}',
+		"data: [DONE]",
+		"",
+	].join("\n");
+	const result = await engine.streamFn(engine.model, context, {
+		fetch: async () => new Response(ssePayload, { status: 200, headers: { "content-type": "text/event-stream" } }),
+	}).result();
+	assert.equal(result.stopReason, "stop");
+	assert.equal(result.provider, "google-subscription");
+	assert.equal(result.content.length, 2);
+	assert.equal(result.content[0]?.type, "thinking");
+	assert.equal((result.content[0] as any).thinking, "Thinking step...");
+	assert.equal(result.content[1]?.type, "text");
+	assert.equal((result.content[1] as any).text, "Hello world!");
+	assert.equal(result.usage.input, 100);
+	assert.equal(result.usage.cacheRead, 20);
+	assert.equal(result.usage.output, 40);
+	assert.equal(result.usage.reasoning, 10);
+});
+test("google-antigravity routes gemini-4-argon and claude-sonnet-5-5 with model_enum and ignores trailing empty text on toolCall", async () => {
+	const { encodeAntigravityApiKey, parseAntigravityApiKey } = await import("../electron/antigravity.cjs");
+	const encoded = encodeAntigravityApiKey({
+		access: "test-token",
+		projectId: "test-proj",
+		catalog: {
+			routing: {
+				"gemini-4-argon": {
+					off: "gemini-4-argon-low",
+					routing: { minimal: "gemini-4-argon-low", low: "gemini-4-argon-low", medium: "gemini-4-argon-medium", high: "gemini-4-argon-high", xhigh: "gemini-4-argon-high" },
+					defaultRequestId: "gemini-4-argon-low",
+				},
+			},
+			modelEnums: { "gemini-4-argon-medium": "MODEL_PLACEHOLDER_M418" },
+		},
+	});
+	const parsed = parseAntigravityApiKey(encoded);
+	assert.equal(parsed.token, "test-token");
+	assert.equal(parsed.projectId, "test-proj");
+
+	const engine = piEngineForSpec({ provider: "google-subscription", id: "gemini-4-argon", thinkingLevel: "medium" }, false);
+	let dispatchedBody: any = null;
+	const sseToolCall = [
+		'data: {"response":{"candidates":[{"content":{"parts":[{"thought":true,"text":"Plan quiz","thoughtSignature":"YWJjZA=="},{"functionCall":{"name":"quiz","args":{"topic":"Rust"}},"thoughtSignature":"ZWZnaA=="}]}}]}}',
+		'data: {"response":{"candidates":[{"content":{"parts":[{"text":""}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":50,"candidatesTokenCount":15,"totalTokenCount":65}}}',
+		"data: [DONE]",
+		"",
+	].join("\n");
+	const multiTurnContext = normalizeContext({
+		messages: [
+			{ role: "user", content: "Quiz me on Rust", timestamp: 1 },
+			{
+				role: "assistant",
+				provider: "google-subscription",
+				model: "gemini-3.8-flash",
+				api: "google-antigravity",
+				stopReason: "toolUse",
+				timestamp: 2,
+				usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+				content: [{ type: "toolCall", id: "quiz_1", name: "quiz", arguments: { topic: "Cargo" } }],
+			} as any,
+			{
+				role: "toolResult",
+				toolCallId: "quiz_1",
+				toolName: "quiz",
+				isError: false,
+				timestamp: 3,
+				content: [{ type: "text", text: "Student scored 1/1" }],
+			} as any,
+			{ role: "user", content: "Next question please", timestamp: 4 },
+		],
+	});
+	const result = await engine.streamFn(engine.model, multiTurnContext, {
+		fetch: async (_url, init) => {
+			dispatchedBody = JSON.parse(String(init?.body ?? "{}"));
+			return new Response(sseToolCall, { status: 200, headers: { "content-type": "text/event-stream" } });
+		},
+	}).result();
+
+	assert.equal(dispatchedBody.model, "gemini-4-argon-medium");
+	assert.equal(dispatchedBody.request?.labels?.model_enum, "MODEL_PLACEHOLDER_M418");
+	assert.equal(result.stopReason, "toolUse");
+	assert.equal(result.content.length, 2);
+	assert.equal(result.content[0]?.type, "thinking");
+	assert.equal(result.content[1]?.type, "toolCall");
 });

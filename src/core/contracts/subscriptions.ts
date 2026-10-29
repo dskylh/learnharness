@@ -1,13 +1,21 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 
 /** Native SDK IDs stay distinct from the app's persisted connection routes. */
-export type NativeSubscriptionProviderId = "github-copilot" | "xai";
-export type NativeSubscriptionLogicalId = "github-copilot-subscription" | "xai-subscription";
+export type NativeSubscriptionProviderId = "github-copilot" | "xai" | "google-antigravity";
+export type NativeSubscriptionLogicalId = "github-copilot-subscription" | "xai-subscription" | "google-subscription";
 
 export const NATIVE_SUBSCRIPTIONS = [
 	{ providerId: "github-copilot", logicalId: "github-copilot-subscription", label: "GitHub Copilot" },
 	{ providerId: "xai", logicalId: "xai-subscription", label: "Grok" },
+	{ providerId: "google-antigravity", logicalId: "google-subscription", label: "Google" },
 ] as const;
+
+export interface SubscriptionModelQuota {
+	id: string;
+	label: string;
+	remainingFraction?: number;
+	resetTime?: string;
+}
 
 export interface SubscriptionPrompt {
 	id: string;
@@ -39,6 +47,7 @@ export interface NativeSubscriptionStatus {
 	revision: number;
 	error?: string;
 	interaction?: SubscriptionInteraction;
+	quotas?: SubscriptionModelQuota[];
 }
 
 /** Private inherited IPC also carries safe, SDK-supported catalog metadata. */

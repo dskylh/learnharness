@@ -31,6 +31,41 @@ function priceLabel(cost: ModelCatalogEntry["cost"]): string {
 	return `${fmt(cost.input)}/${fmt(cost.output)}`;
 }
 
+function formatResetCountdown(resetTime?: string): string | undefined {
+	if (!resetTime) return undefined;
+	const ts = Date.parse(resetTime);
+	if (!Number.isFinite(ts)) return undefined;
+	const delta = ts - Date.now();
+	if (delta <= 0) return "resets now";
+	const totalMin = Math.round(delta / 60000);
+	const days = Math.floor(totalMin / (60 * 24));
+	const hours = Math.floor((totalMin % (60 * 24)) / 60);
+	const mins = totalMin % 60;
+	if (days > 0) return `resets in ${days}d ${hours}h`;
+	if (hours > 0) return `resets in ${hours}h ${mins}m`;
+	return `resets in ${mins}m`;
+}
+
+function modelRightLabel(m: ModelCatalogEntry): { text: string; title: string } {
+	if (m.provider === CLAUDE_CODE_PROVIDER) {
+		return {
+			text: "CLI billing",
+			title: "Billing is determined by your Claude Code configuration; LearnHarness does not estimate it.",
+		};
+	}
+	const sub = subscriptionLabel(`${m.provider}:${m.id}`);
+	if (!sub) return { text: priceLabel(m.cost), title: m.cost ? "USD per 1M tokens in/out" : "Price unavailable" };
+	if (typeof m.quota?.remainingFraction === "number" && Number.isFinite(m.quota.remainingFraction)) {
+		const pct = Math.round(m.quota.remainingFraction * 1000) / 10;
+		const reset = formatResetCountdown(m.quota.resetTime);
+		return {
+			text: `${sub} · ${pct}%`,
+			title: `${sub} subscription (${pct}% quota left${reset ? ` · ${reset}` : ""})`,
+		};
+	}
+	return { text: sub, title: "Subscription connection" };
+}
+
 /** The model dropdown body — fuzzy search + ranked list. `models ===
  *  undefined` is the catalog-loading state; an empty result list gets
  *  its own quiet line. */
@@ -82,18 +117,21 @@ export function ModelMenuList({
 				placeholder="Search models…"
 				loading="Loading models…"
 				empty="No models match."
-				renderItem={(m) => <>
-					<span className="flex items-center justify-between gap-2">
-						<span className="truncate text-card-foreground">{m.name}</span>
-						<span className="shrink-0 tabular-nums text-muted-foreground" title={m.provider === CLAUDE_CODE_PROVIDER ? "Billing is determined by your Claude Code configuration; LearnHarness does not estimate it." : subscriptionLabel(`${m.provider}:${m.id}`) ? "Subscription connection" : m.cost ? "USD per 1M tokens in/out" : "Price unavailable"}>
-							{m.provider === CLAUDE_CODE_PROVIDER ? "CLI billing" : subscriptionLabel(`${m.provider}:${m.id}`) ?? priceLabel(m.cost)}
+				renderItem={(m) => {
+					const badge = modelRightLabel(m);
+					return <>
+						<span className="flex items-center justify-between gap-2">
+							<span className="truncate text-card-foreground">{m.name}</span>
+							<span className="shrink-0 tabular-nums text-muted-foreground" title={badge.title}>
+								{badge.text}
+							</span>
 						</span>
-					</span>
-					<span className="flex items-center justify-between gap-2 text-muted-foreground">
-						<span className="truncate">{subscriptionLabel(`${m.provider}:${m.id}`) ? `${subscriptionLabel(`${m.provider}:${m.id}`)} (subscription)` : m.provider} · {m.id}</span>
-						<span className="shrink-0 tabular-nums">{m.contextWindow === null ? "—" : formatTokens(m.contextWindow)}</span>
-					</span>
-				</>}
+						<span className="flex items-center justify-between gap-2 text-muted-foreground">
+							<span className="truncate">{subscriptionLabel(`${m.provider}:${m.id}`) ? `${subscriptionLabel(`${m.provider}:${m.id}`)} (subscription)` : m.provider} · {m.id}</span>
+							<span className="shrink-0 tabular-nums">{m.contextWindow === null ? "—" : formatTokens(m.contextWindow)}</span>
+						</span>
+					</>;
+				}}
 			/>
 			{footer && (
 				<div className="mt-1 border-t px-2 pt-1.5 text-xs text-muted-foreground">{footer}</div>
