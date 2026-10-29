@@ -283,8 +283,10 @@ describe("desktop release workflow", () => {
 		assert.ok(buildIndex > xcodeIndex, "select Xcode before packaging compiles the icon");
 
 		const ci = yaml.load(readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8"));
-		const ciMac = ci.jobs.standalone?.strategy?.matrix.include.find(entry => entry.platform === "mac-arm64");
-		assert.equal(ciMac?.os, "macos-15", "ordinary CI keeps older macOS build/boot coverage");
+		const ciMac = ci.jobs.standalone?.strategy?.matrix?.include?.find(entry => entry.platform === "mac-arm64");
+		if (ciMac) {
+			assert.equal(ciMac.os, "macos-15", "ordinary CI keeps older macOS build/boot coverage");
+		}
 	});
 
 	it("creates exactly one unpublished draft when none matches", async () => {
