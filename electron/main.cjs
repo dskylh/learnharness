@@ -144,10 +144,15 @@ let desktopAPISecret = null;
 let reopenWindow = null;
 const trustedAppWindows = new Set();
 
+// Guard stdout/stderr against EPIPE when launched from closed pipes/desktop launchers.
+process.stdout?.on?.("error", (err) => { if (err?.code !== "EPIPE") throw err; });
+process.stderr?.on?.("error", (err) => { if (err?.code !== "EPIPE") throw err; });
+
 // A GUI shell must never die to a stray exception (EPIPE dialogs, a race
 // in an event handler): the window + child server are the product, and
 // anything main-side is recoverable by logging it. Log-and-continue.
 process.on("uncaughtException", (err) => {
+	if (err?.code === "EPIPE") return;
 	try {
 		log(`uncaught: ${err?.stack ?? err}`);
 	} catch {
