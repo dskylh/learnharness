@@ -9,6 +9,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  actions: write
 
 jobs:
   sync:
@@ -26,10 +27,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Fetch upstream main
+      - name: Fetch upstream main and tags
         run: |
           git remote add upstream https://github.com/amosblomqvist/learnharness.git || git remote set-url upstream https://github.com/amosblomqvist/learnharness.git
-          git fetch upstream main
+          git fetch upstream main --tags
 
       - name: Check for upstream changes
         id: check_upstream
@@ -47,11 +48,24 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Attempting test merge..."
+          PRE_VERSION=$(node -p "require('./package.json').version")
+          echo "Attempting test merge (current version: $PRE_VERSION)..."
           if git merge --no-commit --no-ff upstream/main; then
+            POST_VERSION=$(node -p "require('./package.json').version")
             echo "Clean merge possible. Committing and pushing to main..."
             git commit -m "chore(sync): merge upstream updates from amosblomqvist/learnharness"
             git push origin main
+            git push origin --tags || true
+
+            if [ "$PRE_VERSION" != "$POST_VERSION" ]; then
+              echo "Version changed from $PRE_VERSION to $POST_VERSION. Triggering AppImage release build..."
+              gh workflow run appimage-release.yml --ref main
+            elif ! gh release view "v$POST_VERSION" >/dev/null 2>&1; then
+              echo "Release v$POST_VERSION does not exist yet. Triggering AppImage release build..."
+              gh workflow run appimage-release.yml --ref main
+            else
+              echo "Version $POST_VERSION unchanged and release exists."
+            fi
           else
             echo "Merge conflict detected! Creating PR for conflict resolution..."
             git merge --abort
@@ -70,4 +84,17 @@ jobs:
                 --title "Sync Upstream: Merge Conflict Detected" \
                 --body "Automatic sync from upstream/main encountered merge conflicts. Please resolve the conflicts in this PR to integrate upstream changes into your main branch."
             fi
+          fi
+
+      - name: Ensure release exists for current version
+        if: steps.check_upstream.outputs.has_changes == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          if ! gh release view "v$CURRENT_VERSION" >/dev/null 2>&1; then
+            echo "Release v$CURRENT_VERSION does not exist. Triggering AppImage release build..."
+            gh workflow run appimage-release.yml --ref main
+          else
+            echo "Release v$CURRENT_VERSION already exists."
           fi
