@@ -59,10 +59,66 @@ export function splitTextIntoChunks(text: string, maxChunkLength = 1600): string
 }
 
 /**
- * Synthesize speech from text using either Deepgram (Aura/Flux) or a local HTTP daemon.
- * Seamlessly chunks long passages to respect character ceilings and returns binary MP3 audio.
+ * Combine multiple lazy ReadableStreams into a single continuous stream.
  */
-export async function synthesizeSpeech(options: SynthesizeOptions): Promise<Buffer> {
+function concatenateReadableStreams(
+	streamFns: Array<() => Promise<ReadableStream<Uint8Array>>>,
+): ReadableStream<Uint8Array> {
+	let index = 0;
+	let currentReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+
+	return new ReadableStream<Uint8Array>({
+		async pull(controller) {
+			while (true) {
+				if (!currentReader) {
+					if (index >= streamFns.length) {
+						controller.close();
+						return;
+					}
+					const nextStream = await streamFns[index++]!();
+					currentReader = nextStream.getReader();
+				}
+
+				const { done, value } = await currentReader.read();
+				if (done) {
+					currentReader = null;
+					continue;
+				}
+
+				if (value) {
+					controller.enqueue(value);
+					return;
+				}
+			}
+		},
+		async cancel(reason) {
+			if (currentReader) {
+				await currentReader.cancel(reason);
+			}
+		},
+	});
+}
+
+function responseToStream(res: Response): ReadableStream<Uint8Array> {
+	if (res.body) {
+		return res.body;
+	}
+	return new ReadableStream<Uint8Array>({
+		async start(controller) {
+			const buf = await res.arrayBuffer();
+			controller.enqueue(new Uint8Array(buf));
+			controller.close();
+		},
+	});
+}
+
+/**
+ * Synthesize speech from text as a direct live ReadableStream<Uint8Array>.
+ * Streams audio frames immediately as Deepgram / local daemon produces them.
+ */
+export async function synthesizeSpeechStream(
+	options: SynthesizeOptions,
+): Promise<ReadableStream<Uint8Array>> {
 	const { provider, text, voice, speed = 1.0, localEndpoint, localApiKey } = options;
 
 	if (provider === "deepgram") {
@@ -76,11 +132,9 @@ export async function synthesizeSpeech(options: SynthesizeOptions): Promise<Buff
 		const isFlux = selectedVoice.startsWith("flux-");
 		const endpoint = isFlux ? "https://api.deepgram.com/v2/speak" : "https://api.deepgram.com/v1/speak";
 
-		// Deepgram enforces a 2000-character payload ceiling.
-		// Split longer texts into safe sentence chunks, synthesize, and concatenate the MP3 frames.
 		const chunks = splitTextIntoChunks(text, 1600);
 
-		async function fetchSingleChunk(chunkText: string): Promise<Buffer> {
+		async function fetchSingleStream(chunkText: string): Promise<ReadableStream<Uint8Array>> {
 			const url = new URL(endpoint);
 			url.searchParams.set("model", selectedVoice);
 			if (clampedSpeed !== 1.0) {
@@ -101,16 +155,14 @@ export async function synthesizeSpeech(options: SynthesizeOptions): Promise<Buff
 				throw new Error(`Deepgram TTS failed (${res.status}): ${errorText}`);
 			}
 
-			const arrayBuffer = await res.arrayBuffer();
-			return Buffer.from(arrayBuffer);
+			return responseToStream(res);
 		}
 
 		if (chunks.length === 1) {
-			return await fetchSingleChunk(chunks[0]!);
+			return await fetchSingleStream(chunks[0]!);
 		}
 
-		const buffers = await Promise.all(chunks.map((c) => fetchSingleChunk(c)));
-		return Buffer.concat(buffers);
+		return concatenateReadableStreams(chunks.map((c) => () => fetchSingleStream(c)));
 	}
 
 	// Local background daemon
@@ -124,29 +176,40 @@ export async function synthesizeSpeech(options: SynthesizeOptions): Promise<Buff
 		headers["Authorization"] = `Bearer ${key}`;
 	}
 
-	try {
-		const res = await fetch(targetUrl, {
-			method: "POST",
-			headers,
-			body: JSON.stringify({
-				// Compatible with OpenAI speech endpoints and custom HTTP daemons
-				input: text,
-				text,
-				model: voice || "tts-1",
-				voice: voice || "default",
-				speed,
-			}),
-		});
-
-		if (!res.ok) {
-			const errorText = await res.text().catch(() => res.statusText);
-			throw new Error(`Local TTS daemon returned error (${res.status}): ${errorText}`);
-		}
-
-		const arrayBuffer = await res.arrayBuffer();
-		return Buffer.from(arrayBuffer);
-	} catch (err: unknown) {
+	const res = await fetch(targetUrl, {
+		method: "POST",
+		headers,
+		body: JSON.stringify({
+			input: text,
+			text,
+			model: voice || "tts-1",
+			voice: voice || "default",
+			speed,
+		}),
+	}).catch((err: unknown) => {
 		const message = err instanceof Error ? err.message : String(err);
 		throw new Error(`Could not connect to local TTS daemon at ${targetUrl}: ${message}`);
+	});
+
+	if (!res.ok) {
+		const errorText = await res.text().catch(() => res.statusText);
+		throw new Error(`Local TTS daemon returned error (${res.status}): ${errorText}`);
 	}
+
+	return responseToStream(res);
+}
+
+/**
+ * Synthesize speech from text and buffer the full result (for cache storage or non-streaming callers).
+ */
+export async function synthesizeSpeech(options: SynthesizeOptions): Promise<Buffer> {
+	const stream = await synthesizeSpeechStream(options);
+	const reader = stream.getReader();
+	const chunks: Uint8Array[] = [];
+	while (true) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		if (value) chunks.push(value);
+	}
+	return Buffer.concat(chunks);
 }

@@ -118,7 +118,20 @@ export function useTts(options?: UseTtsOptions): UseTtsReturn {
 				return;
 			}
 
-			// Fetch from /api/tts
+			// If text fits in query parameters (<1500 chars), stream immediately via GET
+			// The browser's HTML5 Audio engine natively starts playing the progressive MP3 stream in ~150-250ms
+			if (text.length < 1500) {
+				setStatus("loading");
+				const params = new URLSearchParams({ text });
+				if (options?.provider) params.set("provider", options.provider);
+				if (options?.voice) params.set("voice", options.voice);
+				if (options?.speed) params.set("speed", String(options.speed));
+				const streamUrl = `/api/tts?${params.toString()}`;
+				playAudioUrl(streamUrl, messageId);
+				return;
+			}
+
+			// For longer text, fetch via POST and stream the response
 			setStatus("loading");
 			const abortController = new AbortController();
 			abortControllerRef.current = abortController;

@@ -75,6 +75,8 @@ describe("POST /api/tts", () => {
 		assert.equal(res1.status, 200);
 		assert.equal(res1.headers.get("Content-Type"), "audio/mpeg");
 		assert.equal(fetchCalls, 1);
+		await res1.arrayBuffer();
+		await new Promise((r) => setTimeout(r, 50));
 
 		// Second call with same text should hit disk cache, not re-calling Deepgram
 		const req2 = new Request("http://localhost/api/tts", {
@@ -186,6 +188,32 @@ describe("POST /api/tts", () => {
 
 		const res = await route.POST(req);
 		assert.equal(res.status, 200);
+		await res.arrayBuffer();
 		assert.ok(chunkCallCount >= 2, `Expected at least 2 chunks, got ${chunkCallCount}`);
+		await new Promise((r) => setTimeout(r, 60));
+	});
+
+	it("supports GET /api/tts for progressive HTTP chunk streaming", async () => {
+		globalThis.fetch = async (input) => {
+			const urlStr = String(input);
+			if (urlStr.includes("deepgram.com")) {
+				return new Response(Buffer.from("streaming-deepgram-audio"), {
+					status: 200,
+					headers: { "Content-Type": "audio/mpeg" },
+				});
+			}
+			return realFetch(input);
+		};
+
+		const req = new Request("http://localhost/api/tts?text=Canli+yayinlanan+ders+sesi&provider=deepgram&voice=flux-defne-tr", {
+			method: "GET",
+		});
+
+		const res = await route.GET(req);
+		assert.equal(res.status, 200);
+		assert.equal(res.headers.get("Content-Type"), "audio/mpeg");
+		const arrayBuf = await res.arrayBuffer();
+		assert.ok(arrayBuf.byteLength > 0);
+		await new Promise((r) => setTimeout(r, 60));
 	});
 });
