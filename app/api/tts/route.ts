@@ -51,6 +51,11 @@ export async function POST(req: Request) {
 				? (body as { localEndpoint: string }).localEndpoint.trim()
 				: effective.tts.localEndpoint;
 
+		const localApiKey =
+			typeof (body as { localApiKey?: unknown }).localApiKey === "string"
+				? (body as { localApiKey: string }).localApiKey.trim()
+				: effective.tts.localApiKey;
+
 		const cacheKey = computeTtsCacheKey(provider, voice || "default", speed, cleanedText);
 
 		// Check disk cache first
@@ -62,6 +67,7 @@ export async function POST(req: Request) {
 				voice,
 				speed,
 				localEndpoint,
+				localApiKey,
 			});
 			await saveCachedAudio(cacheKey, audioBuffer);
 		}

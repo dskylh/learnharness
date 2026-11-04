@@ -122,4 +122,70 @@ describe("POST /api/tts", () => {
 		assert.equal(res.status, 200);
 		assert.ok(localCalled);
 	});
+
+	it("passes Bearer token to local daemon when localApiKey is provided", async () => {
+		let authHeaderReceived = "";
+		globalThis.fetch = async (input, init) => {
+			const urlStr = String(input);
+			if (urlStr.includes("127.0.0.1:8880")) {
+				authHeaderReceived = (init?.headers as Record<string, string>)?.["Authorization"] || "";
+				return new Response(Buffer.from("authed-audio-bytes"), {
+					status: 200,
+					headers: { "Content-Type": "audio/mpeg" },
+				});
+			}
+			return realFetch(input, init);
+		};
+
+		const req = new Request("http://localhost/api/tts", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				text: "Authenticated local synthesis.",
+				provider: "local",
+				localApiKey: "secret-bearer-token",
+				localEndpoint: "http://127.0.0.1:8880/v1/audio/speech",
+			}),
+		});
+
+		const res = await route.POST(req);
+		assert.equal(res.status, 200);
+		assert.equal(authHeaderReceived, "Bearer secret-bearer-token");
+	});
+
+	it("chunks long passages exceeding 2000 characters and joins them seamlessly", async () => {
+		let chunkCallCount = 0;
+		globalThis.fetch = async (input, init) => {
+			const urlStr = String(input);
+			if (urlStr.includes("deepgram.com")) {
+				chunkCallCount++;
+				const body = JSON.parse(String(init?.body));
+				assert.ok(body.text.length <= 1650, `Chunk was ${body.text.length} chars, must be <= 1650`);
+				return new Response(Buffer.from(`chunk-${chunkCallCount}-bytes`), {
+					status: 200,
+					headers: { "Content-Type": "audio/mpeg" },
+				});
+			}
+			return realFetch(input, init);
+		};
+
+		// 3000-character text with sentences
+		const sentence = "Bu ders boyunca diferansiyel denklemlerin temel prensiplerini ve fizikteki uygulamalarını adım adım inceleyeceğiz. ";
+		const longText = sentence.repeat(30);
+		assert.ok(longText.length > 3000);
+
+		const req = new Request("http://localhost/api/tts", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				text: longText,
+				provider: "deepgram",
+				voice: "flux-defne-tr",
+			}),
+		});
+
+		const res = await route.POST(req);
+		assert.equal(res.status, 200);
+		assert.ok(chunkCallCount >= 2, `Expected at least 2 chunks, got ${chunkCallCount}`);
+	});
 });

@@ -423,6 +423,12 @@ export function parseTtsSettingsBody(body: unknown): SettingsBodyResult<TtsSetti
 		}
 		settings.localEndpoint = raw.localEndpoint.trim();
 	}
+	if (raw.localApiKey !== undefined) {
+		if (typeof raw.localApiKey !== "string") {
+			return { ok: false, error: "localApiKey must be a string" };
+		}
+		settings.localApiKey = raw.localApiKey.trim();
+	}
 	if (raw.deepgramVoice !== undefined) {
 		if (typeof raw.deepgramVoice !== "string") {
 			return { ok: false, error: "deepgramVoice must be a string" };

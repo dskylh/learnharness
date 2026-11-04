@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import {
-	DEEPGRAM_AURA_VOICES,
+	DEEPGRAM_VOICES,
 	DEFAULT_LOCAL_TTS_ENDPOINT,
 	type TtsProvider,
 	type TtsSettings,
@@ -25,18 +25,25 @@ export function TtsSection({
 }) {
 	const currentProvider: TtsProvider = tts?.provider ?? "local";
 	const currentEndpoint = tts?.localEndpoint ?? DEFAULT_LOCAL_TTS_ENDPOINT;
-	const currentVoice = tts?.deepgramVoice ?? "aura-asteria-en";
+	const currentApiKey = tts?.localApiKey ?? "";
+	const currentVoice = tts?.deepgramVoice ?? "flux-defne-tr";
 	const currentAutoPlay = tts?.autoPlay ?? false;
 	const currentSpeed = tts?.speed ?? 1.0;
 
 	const [endpointDraft, setEndpointDraft] = useState(currentEndpoint);
+	const [apiKeyDraft, setApiKeyDraft] = useState(currentApiKey);
+	const [showKey, setShowKey] = useState(false);
+
+	const turkishVoices = DEEPGRAM_VOICES.filter((v) => v.language === "tr");
+	const englishVoices = DEEPGRAM_VOICES.filter((v) => v.language === "en");
+	const multilingualVoices = DEEPGRAM_VOICES.filter((v) => !["tr", "en"].includes(v.language));
 
 	return (
 		<div className="flex flex-col gap-4">
 			<SettingsGroup label="TTS Engine Provider">
 				<SettingsRow
 					label="Model Provider"
-					hint="Choose between an external local background daemon or Deepgram Aura cloud."
+					hint="Choose between an external local background daemon or Deepgram Aura/Flux cloud."
 				>
 					<select
 						value={currentProvider}
@@ -49,35 +56,67 @@ export function TtsSection({
 						className="h-8 rounded-sm border border-border bg-background px-2 font-ui text-xs text-foreground focus:border-foreground focus:outline-none"
 					>
 						<option value="local">Local Model (Background Daemon)</option>
-						<option value="deepgram">Deepgram Aura (Cloud)</option>
+						<option value="deepgram">Deepgram (Cloud)</option>
 					</select>
 				</SettingsRow>
 
 				{currentProvider === "local" ? (
-					<SettingsRow
-						label="Local Daemon Endpoint"
-						hint="HTTP endpoint for your local speech model (e.g. Kokoro, Piper, or OpenAI-compatible /v1/audio/speech)."
-					>
-						<input
-							type="text"
-							value={endpointDraft}
-							onChange={(e) => setEndpointDraft(e.target.value)}
-							onBlur={() => {
-								if (endpointDraft !== currentEndpoint) {
-									onSectionChange({
-										...tts,
-										localEndpoint: endpointDraft.trim() || DEFAULT_LOCAL_TTS_ENDPOINT,
-									});
-								}
-							}}
-							placeholder={DEFAULT_LOCAL_TTS_ENDPOINT}
-							className="h-8 w-72 rounded-sm border border-border bg-background px-2.5 font-mono text-xs text-foreground focus:border-foreground focus:outline-none"
-						/>
-					</SettingsRow>
+					<>
+						<SettingsRow
+							label="Local Daemon Endpoint"
+							hint="HTTP endpoint for your local speech model (e.g. Kokoro, Piper, or OpenAI-compatible /v1/audio/speech)."
+						>
+							<input
+								type="text"
+								value={endpointDraft}
+								onChange={(e) => setEndpointDraft(e.target.value)}
+								onBlur={() => {
+									if (endpointDraft !== currentEndpoint) {
+										onSectionChange({
+											...tts,
+											localEndpoint: endpointDraft.trim() || DEFAULT_LOCAL_TTS_ENDPOINT,
+										});
+									}
+								}}
+								placeholder={DEFAULT_LOCAL_TTS_ENDPOINT}
+								className="h-8 w-72 rounded-sm border border-border bg-background px-2.5 font-mono text-xs text-foreground focus:border-foreground focus:outline-none"
+							/>
+						</SettingsRow>
+
+						<SettingsRow
+							label="Local API Key (Optional)"
+							hint="Bearer token or API key for authenticated local servers (or set LOCAL_TTS_API_KEY in .env.local). Leave empty if keyless."
+						>
+							<div className="flex items-center gap-2">
+								<input
+									type={showKey ? "text" : "password"}
+									value={apiKeyDraft}
+									onChange={(e) => setApiKeyDraft(e.target.value)}
+									onBlur={() => {
+										if (apiKeyDraft !== currentApiKey) {
+											onSectionChange({
+												...tts,
+												localApiKey: apiKeyDraft.trim() || undefined,
+											});
+										}
+									}}
+									placeholder="Bearer token or key"
+									className="h-8 w-56 rounded-sm border border-border bg-background px-2.5 font-mono text-xs text-foreground focus:border-foreground focus:outline-none"
+								/>
+								<button
+									type="button"
+									onClick={() => setShowKey(!showKey)}
+									className="h-8 rounded-sm border border-border px-2 text-xs text-muted-foreground hover:text-foreground"
+								>
+									{showKey ? "Gizle" : "Göster"}
+								</button>
+							</div>
+						</SettingsRow>
+					</>
 				) : (
 					<SettingsRow
 						label="Deepgram Voice"
-						hint="Select an Aura voice persona. Requires DEEPGRAM_API_KEY in the Providers section."
+						hint="Select a voice persona (Türkçe Flux TTS or English/Multilingual Aura). Requires DEEPGRAM_API_KEY in Providers."
 					>
 						<select
 							value={currentVoice}
@@ -89,11 +128,27 @@ export function TtsSection({
 							}
 							className="h-8 max-w-[280px] rounded-sm border border-border bg-background px-2 font-ui text-xs text-foreground focus:border-foreground focus:outline-none"
 						>
-							{DEEPGRAM_AURA_VOICES.map((voice) => (
-								<option key={voice.id} value={voice.id}>
-									{voice.label}
-								</option>
-							))}
+							<optgroup label="Türkçe (Flux TTS)">
+								{turkishVoices.map((voice) => (
+									<option key={voice.id} value={voice.id}>
+										{voice.label}
+									</option>
+								))}
+							</optgroup>
+							<optgroup label="English (Aura)">
+								{englishVoices.map((voice) => (
+									<option key={voice.id} value={voice.id}>
+										{voice.label}
+									</option>
+								))}
+							</optgroup>
+							<optgroup label="Diğer Diller (Aura-2)">
+								{multilingualVoices.map((voice) => (
+									<option key={voice.id} value={voice.id}>
+										{voice.label}
+									</option>
+								))}
+							</optgroup>
 						</select>
 					</SettingsRow>
 				)}

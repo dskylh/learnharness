@@ -197,6 +197,7 @@ export function resolveSettings(record: UserSettings | null): EffectiveSettings 
 				? record.tts.provider
 				: FACTORY_SETTINGS.tts.provider,
 			localEndpoint: record?.tts?.localEndpoint ?? FACTORY_SETTINGS.tts.localEndpoint,
+			localApiKey: record?.tts?.localApiKey,
 			deepgramVoice: record?.tts?.deepgramVoice ?? FACTORY_SETTINGS.tts.deepgramVoice,
 			autoPlay: record?.tts?.autoPlay ?? FACTORY_SETTINGS.tts.autoPlay,
 			speed: record?.tts?.speed ?? FACTORY_SETTINGS.tts.speed,

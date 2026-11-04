@@ -820,6 +820,9 @@ function sanitizeTts(raw: Record<string, unknown>): TtsSettings {
 	if (typeof raw.localEndpoint === "string" && raw.localEndpoint.trim().length > 0) {
 		out.localEndpoint = raw.localEndpoint.trim();
 	}
+	if (typeof raw.localApiKey === "string" && raw.localApiKey.trim().length > 0) {
+		out.localApiKey = raw.localApiKey.trim();
+	}
 	if (typeof raw.deepgramVoice === "string" && raw.deepgramVoice.trim().length > 0) {
 		out.deepgramVoice = raw.deepgramVoice.trim();
 	}
