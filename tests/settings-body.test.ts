@@ -16,6 +16,7 @@ import {
 	parseGeneralSettingsBody,
 	parseCompactionSettingsBody,
 	parseGraphSettingsBody,
+	parseTtsSettingsBody,
 	SETTINGS_SECTIONS,
 } from "../src/server/settings-body.ts";
 
@@ -234,15 +235,46 @@ describe("parseCompactionSettingsBody (owner round 14)", () => {
 });
 
 describe("SETTINGS_SECTIONS (the route's section map)", () => {
-	it("maps exactly the eight record sections", () => {
+	it("maps exactly the record sections", () => {
 		// compaction joined (owner round 14): its own section PUT — the
 		// threshold is engine behavior, not an agent-section key. The custom
 		// endpoint is NOT a section: it is one more provider in the Keys list,
 		// connected through POST /api/custom-provider.
 		assert.deepEqual(
 			Object.keys(SETTINGS_SECTIONS),
-			["general", "chat", "agent", "appearance", "graph", "compaction", "models", "dictation", "claudeCode"],
+			["general", "chat", "agent", "appearance", "graph", "compaction", "models", "dictation", "claudeCode", "tts"],
 		);
+	});
+});
+
+describe("parseTtsSettingsBody", () => {
+	it("parses valid tts settings replace-whole", () => {
+		const empty = parseTtsSettingsBody({});
+		assert.ok(empty.ok);
+		assert.deepEqual(empty.settings, {});
+
+		const filled = parseTtsSettingsBody({
+			provider: "deepgram",
+			localEndpoint: "http://127.0.0.1:8880/v1/audio/speech",
+			deepgramVoice: "aura-luna-en",
+			autoPlay: true,
+			speed: 1.25,
+		});
+		assert.ok(filled.ok);
+		assert.deepEqual(filled.settings, {
+			provider: "deepgram",
+			localEndpoint: "http://127.0.0.1:8880/v1/audio/speech",
+			deepgramVoice: "aura-luna-en",
+			autoPlay: true,
+			speed: 1.25,
+		});
+	});
+
+	it("rejects invalid provider, non-boolean autoPlay, and out-of-range speed", () => {
+		assert.equal(parseTtsSettingsBody({ provider: "unknown" }).ok, false);
+		assert.equal(parseTtsSettingsBody({ autoPlay: "true" }).ok, false);
+		assert.equal(parseTtsSettingsBody({ speed: 0.1 }).ok, false);
+		assert.equal(parseTtsSettingsBody({ speed: 5.0 }).ok, false);
 	});
 });
 

@@ -25,6 +25,7 @@ import type {
 	ModelsSettings,
 	ModelSlot,
 	RoleModelOverride,
+	TtsSettings,
 } from "../core/settings.ts";
 import { BACKGROUND_MODEL_ROLES, CACHE_RETENTIONS, COMPACTION_THRESHOLD_FLOOR, CUSTOM_MODEL_PIN_FLOOR, EXTRACTION_CHUNK_TOKENS_FLOOR, MODEL_SLOTS } from "../core/settings.ts";
 import { WRITABLE_TOOL_KEYS } from "../core/pending.ts";
@@ -405,6 +406,44 @@ export function parseDictationSettingsBody(body: unknown): SettingsBodyResult<Di
 	return { ok: true, settings: { language: raw.language } };
 }
 
+/** tts: { provider?: "local" | "deepgram", localEndpoint?: string, deepgramVoice?: string, autoPlay?: boolean, speed?: number } */
+export function parseTtsSettingsBody(body: unknown): SettingsBodyResult<TtsSettings> {
+	const raw = asRecord(body);
+	if (!raw) return { ok: false, error: "Invalid JSON body" };
+	const settings: TtsSettings = {};
+	if (raw.provider !== undefined) {
+		if (raw.provider !== "local" && raw.provider !== "deepgram") {
+			return { ok: false, error: "provider must be 'local' or 'deepgram'" };
+		}
+		settings.provider = raw.provider;
+	}
+	if (raw.localEndpoint !== undefined) {
+		if (typeof raw.localEndpoint !== "string") {
+			return { ok: false, error: "localEndpoint must be a string" };
+		}
+		settings.localEndpoint = raw.localEndpoint.trim();
+	}
+	if (raw.deepgramVoice !== undefined) {
+		if (typeof raw.deepgramVoice !== "string") {
+			return { ok: false, error: "deepgramVoice must be a string" };
+		}
+		settings.deepgramVoice = raw.deepgramVoice.trim();
+	}
+	if (raw.autoPlay !== undefined) {
+		if (typeof raw.autoPlay !== "boolean") {
+			return { ok: false, error: "autoPlay must be a boolean" };
+		}
+		settings.autoPlay = raw.autoPlay;
+	}
+	if (raw.speed !== undefined) {
+		if (typeof raw.speed !== "number" || Number.isNaN(raw.speed) || raw.speed < 0.5 || raw.speed > 2.5) {
+			return { ok: false, error: "speed must be a number between 0.5 and 2.5" };
+		}
+		settings.speed = Math.round(raw.speed * 100) / 100;
+	}
+	return { ok: true, settings };
+}
+
 /** The custom endpoint's per-model pins (PATCH /api/custom-provider): the
  *  whole desired map, replace-whole like every section. Strict write side — a
  *  token count must be a whole number at or above the floor (the read side
@@ -456,6 +495,7 @@ export const SETTINGS_SECTIONS = {
 	models: parseModelsSettingsBody,
 	dictation: parseDictationSettingsBody,
 	claudeCode: parseClaudeCodeSettingsBody,
+	tts: parseTtsSettingsBody,
 } as const;
 
 export type SettingsSectionName = keyof typeof SETTINGS_SECTIONS;

@@ -1,0 +1,10 @@
+{
+  "mcp": {
+    "servers": {
+      "deepgram-docs": {
+        "type": "remote",
+        "url": "https://api.dx.deepgram.com/kapa/mcp"
+      }
+    }
+  }
+}

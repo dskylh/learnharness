@@ -52,6 +52,8 @@ import { AppearanceSection, GraphSection } from "./appearance-section.tsx";
 import { KeyboardSection } from "./keyboard-section.tsx";
 import { ChatGPTUIProvider } from "./chatgpt-connection.tsx";
 import { NativeSubscriptionUIProvider } from "./subscription-connections.tsx";
+import { TtsSection } from "./tts-section.tsx";
+import type { TtsSettings } from "@/src/core";
 
 /** Owner (2026-09-20): hints earn their place — mechanics-explaining
  *  prose is out; only the keyboard note stays (storage location is a
@@ -59,6 +61,7 @@ import { NativeSubscriptionUIProvider } from "./subscription-connections.tsx";
 const SECTIONS = [
 	{ id: "keys", label: "Providers" },
 	{ id: "agent", label: "Agent" },
+	{ id: "tts", label: "Speech (TTS)" },
 	{ id: "appearance", label: "Appearance" },
 	{ id: "graph", label: "Graph" },
 	{ id: "keyboard", label: "Keyboard", hint: "Stored on this device" },
@@ -226,7 +229,7 @@ export function SettingsDialogBody({
 	 *  schema mistake caught by the validation surface). */
 	const write = useCallback(
 		async (
-			section: "general" | "agent" | "models" | "appearance" | "graph" | "compaction",
+			section: "general" | "agent" | "models" | "appearance" | "graph" | "compaction" | "tts",
 			body: object,
 		) => {
 			setError(null);
@@ -391,6 +394,20 @@ export function SettingsDialogBody({
 										}
 										onCompactionChange={(next: CompactionSettings) =>
 											void write("compaction", next)
+										}
+									/>
+								</SettingsSection>
+							)}
+							{active === "tts" && (
+								<SettingsSection
+									title="Speech (TTS)"
+									hint="Configure audio narration for teaching parts."
+									testid="section-tts"
+								>
+									<TtsSection
+										tts={record.tts}
+										onSectionChange={(next: TtsSettings) =>
+											void write("tts", next)
 										}
 									/>
 								</SettingsSection>

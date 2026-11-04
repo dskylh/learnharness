@@ -26,6 +26,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ModelRole } from "../../config.ts";
 import type { ChatSettings } from "./contracts/chat.ts";
 import type { SearchEngineId } from "./search.ts";
+import type { ResolvedTtsSettings } from "./contracts/tts.ts";
 import {
 	BACKGROUND_MODEL_ROLES,
 	FACTORY_SETTINGS,
@@ -74,6 +75,7 @@ export type EffectiveAppearance = FactorySettings["appearance"];
 export interface EffectiveSettings {
 	general: Required<GeneralSettings>;
 	dictation: Required<DictationSettings>;
+	tts: ResolvedTtsSettings;
 	agent: {
 		models: Record<BackgroundModelRole, EffectiveModelSpec | undefined>;
 		/** Delta map as stored — consumers resolve absent key → enabled. */
@@ -189,6 +191,15 @@ export function resolveSettings(record: UserSettings | null): EffectiveSettings 
 		},
 		dictation: {
 			language: record?.dictation?.language ?? FACTORY_SETTINGS.dictation.language,
+		},
+		tts: {
+			provider: (record?.tts?.provider === "local" || record?.tts?.provider === "deepgram")
+				? record.tts.provider
+				: FACTORY_SETTINGS.tts.provider,
+			localEndpoint: record?.tts?.localEndpoint ?? FACTORY_SETTINGS.tts.localEndpoint,
+			deepgramVoice: record?.tts?.deepgramVoice ?? FACTORY_SETTINGS.tts.deepgramVoice,
+			autoPlay: record?.tts?.autoPlay ?? FACTORY_SETTINGS.tts.autoPlay,
+			speed: record?.tts?.speed ?? FACTORY_SETTINGS.tts.speed,
 		},
 		agent: {
 			models,

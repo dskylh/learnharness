@@ -86,6 +86,8 @@ import {
 } from "@/src/core";
 import { ReadingThinkingField } from "@/components/reading-thinking";
 import { currentUserThinkingOpen, setAllUserThinkingOpen } from "@/components/thinking-block";
+import { useTts } from "@/components/use-tts";
+import { TtsButton } from "@/components/tts-button";
 
 /** One width for everything: transcript, cards, and the bottom blob share this column. */
 /**
@@ -556,6 +558,24 @@ export function Chat({
 	// color-coded dotted divider at each boundary; the header chip reads the
 	// session's current phase.
 	const phases = useMemo(() => phaseTimeline(messages), [messages]);
+
+	const tts = useTts();
+
+	// Auto-narrate newly completed teaching turn if autoPlay is enabled in settings
+	useEffect(() => {
+		if (status !== "ready" || !tts.autoPlayEnabled) return;
+		const lastMsg = messages[messages.length - 1];
+		if (!lastMsg || lastMsg.role !== "assistant") return;
+		const lastPhase = phases[phases.length - 1];
+		if (lastPhase !== "teach") return;
+		for (let i = lastMsg.parts.length - 1; i >= 0; i--) {
+			const part = lastMsg.parts[i];
+			if (part && part.type === "text" && part.text?.trim()) {
+				tts.maybeAutoPlay(part.id || `msg-${messages.length - 1}-${i}`, part.text);
+				break;
+			}
+		}
+	}, [status, messages, phases, tts]);
 
 	const [composerDraftRevision, setComposerDraftRevision] = useState(0);
 	/* The composer draft ref is synchronous, so sends and dictation flushes
@@ -1557,9 +1577,23 @@ export function Chat({
 													case "text": {
 														const sourceId = textPartMessageId(part.id);
 														const anchor = sourceId && sourceTextParts.get(sourceId) === part.id ? messageAnchorId(sourceId) : undefined;
+														const isTeachingPhase = phases[mi] === "teach";
+														const partKey = part.id || `msg-${mi}-${pi}`;
 														return (
-															<div key={part.id || pi} id={anchor} data-source-message-id={sourceId ?? undefined} className="lh-source-passage">
+															<div key={part.id || pi} id={anchor} data-source-message-id={sourceId ?? undefined} className="lh-source-passage group/passage relative">
 																<MessageResponse>{part.text}</MessageResponse>
+																{isTeachingPhase && part.text?.trim() && (
+																	<div className="mt-1 flex items-center gap-1.5 opacity-60 transition-opacity hover:opacity-100">
+																		<TtsButton
+																			status={tts.status}
+																			isPlaying={tts.currentMessageId === partKey && tts.status === "playing"}
+																			isLoading={tts.currentMessageId === partKey && tts.status === "loading"}
+																			isPaused={tts.currentMessageId === partKey && tts.status === "paused"}
+																			errorMessage={tts.currentMessageId === partKey ? tts.error : null}
+																			onClick={() => void tts.play(partKey, part.text ?? "")}
+																		/>
+																	</div>
+																)}
 															</div>
 														);
 													}

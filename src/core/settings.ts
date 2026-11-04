@@ -35,6 +35,12 @@ import type { ModelRole } from "../../config.ts";
 import type { ChatSettings } from "./contracts/chat.ts";
 import type { SearchEngineId } from "./search.ts";
 import { isDictationLanguage, type DictationLanguage } from "./dictation.ts";
+import {
+	DEFAULT_DEEPGRAM_TTS_VOICE,
+	DEFAULT_LOCAL_TTS_ENDPOINT,
+	type TtsSettings,
+} from "./contracts/tts.ts";
+export type { TtsSettings } from "./contracts/tts.ts";
 
 /** The schema version this code understands. Bump ONLY for breaking shape
  *  changes (a field renamed/meaning changed); pure additions never bump. */
@@ -467,6 +473,7 @@ export interface UserSettings {
 	version: number;
 	general?: GeneralSettings;
 	dictation?: DictationSettings;
+	tts?: TtsSettings;
 	/** Explicit app-wide opt-in; absent/invalid is off, including older records. */
 	claudeCode?: { enabled?: boolean };
 	agent?: AgentSettings;
@@ -489,6 +496,13 @@ export interface FactorySettings {
 	version: number;
 	general: Required<GeneralSettings>;
 	dictation: Required<DictationSettings>;
+	tts: {
+		provider: "local" | "deepgram";
+		localEndpoint: string;
+		deepgramVoice: string;
+		autoPlay: boolean;
+		speed: number;
+	};
 	appearance: {
 		mode: "dark" | "light";
 		background: string | null;
@@ -509,6 +523,13 @@ export const FACTORY_SETTINGS: FactorySettings = {
 	version: CURRENT_SETTINGS_VERSION,
 	general: { autoUpdate: true },
 	dictation: { language: "en" },
+	tts: {
+		provider: "local",
+		localEndpoint: DEFAULT_LOCAL_TTS_ENDPOINT,
+		deepgramVoice: DEFAULT_DEEPGRAM_TTS_VOICE,
+		autoPlay: false,
+		speed: 1,
+	},
 	appearance: {
 		mode: "dark",
 		background: null, // the dark default (#141414) lives in the mode's derivation curve
@@ -791,6 +812,26 @@ function sanitizeCompaction(raw: Record<string, unknown>): CompactionSettings {
 	return out;
 }
 
+function sanitizeTts(raw: Record<string, unknown>): TtsSettings {
+	const out: TtsSettings = {};
+	if (raw.provider === "local" || raw.provider === "deepgram") {
+		out.provider = raw.provider;
+	}
+	if (typeof raw.localEndpoint === "string" && raw.localEndpoint.trim().length > 0) {
+		out.localEndpoint = raw.localEndpoint.trim();
+	}
+	if (typeof raw.deepgramVoice === "string" && raw.deepgramVoice.trim().length > 0) {
+		out.deepgramVoice = raw.deepgramVoice.trim();
+	}
+	if (typeof raw.autoPlay === "boolean") {
+		out.autoPlay = raw.autoPlay;
+	}
+	if (typeof raw.speed === "number" && Number.isFinite(raw.speed) && raw.speed >= 0.5 && raw.speed <= 2.5) {
+		out.speed = Math.round(raw.speed * 100) / 100;
+	}
+	return out;
+}
+
 /**
  * Coerce arbitrary JSON (disk file, network body) into a valid delta record:
  * known fields validated strictly (invalid ones drop/clamp per module doc),
@@ -811,6 +852,12 @@ export function sanitizeUserSettings(raw: unknown): UserSettings | null {
 		out.dictation = raw !== null && typeof raw === "object" && !Array.isArray(raw) &&
 			isDictationLanguage((raw as Record<string, unknown>).language)
 			? { language: (raw as DictationSettings).language }
+			: {};
+	}
+	if (r.tts !== undefined) {
+		const raw = r.tts;
+		out.tts = raw !== null && typeof raw === "object" && !Array.isArray(raw)
+			? sanitizeTts(raw as Record<string, unknown>)
 			: {};
 	}
 	if (r.claudeCode !== undefined) {

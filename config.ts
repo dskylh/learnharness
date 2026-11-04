@@ -29,6 +29,8 @@ export const PATHS = {
 	/** Debug artifacts (env-gated): data/debug/provider-events/<chatId>.jsonl
 	 * raw provider stream recordings (src/agent/provider-events.ts). */
 	debug: path.join(DATA_ROOT, "debug"),
+	/** Synthesized TTS audio cache (data/cache/tts/<sha256>.mp3). */
+	ttsCache: path.join(DATA_ROOT, "cache", "tts"),
 } as const;
 
 // ─── Models ────────────────────────────────────────────────────────────────
