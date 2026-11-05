@@ -30,7 +30,7 @@ jobs:
       - name: Fetch upstream main and tags
         run: |
           git remote add upstream https://github.com/amosblomqvist/learnharness.git || git remote set-url upstream https://github.com/amosblomqvist/learnharness.git
-          git fetch upstream main --tags
+          git fetch upstream main --tags --force
 
       - name: Check for upstream changes
         id: check_upstream
@@ -55,7 +55,7 @@ jobs:
             echo "Clean merge possible. Committing and pushing to main..."
             git commit -m "chore(sync): merge upstream updates from amosblomqvist/learnharness"
             git push origin main
-            git push origin --tags || true
+            git push origin --tags --force || true
 
             if [ "$PRE_VERSION" != "$POST_VERSION" ]; then
               echo "Version changed from $PRE_VERSION to $POST_VERSION. Triggering AppImage release build..."
